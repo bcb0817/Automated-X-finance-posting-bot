@@ -12,47 +12,49 @@ def generate_crons() -> List[str]:
     # 1日の総投稿数をランダムに決定（40〜50回）
     total = random.randint(40, 50)
 
-    # JST 4:30〜23:00 = UTC 19:30〜14:00
-    # 分単位で表現
-    # JST 4:30 = UTC 19:30 前日
-    # JST 23:00 = UTC 14:00
-
     # 時間帯ごとの配分
-    # 早朝 4:30〜 6:00 JST（UTC 19:30〜21:00）
-    # 朝   6:00〜 9:00 JST（UTC 21:00〜 0:00）
-    # 昼  11:00〜13:00 JST（UTC  2:00〜 4:00）
-    # 夜  17:00〜23:00 JST（UTC  8:00〜14:00）
+    early_count = round(total * 3 / 40)
+    morning_count = round(total * 10 / 40)
+    noon_count = round(total * 7 / 40)
+    evening_count = total - early_count - morning_count - noon_count
 
-    early_count = round(total * 3 / 40)    # 早朝 約3回
-    morning_count = round(total * 10 / 40) # 朝  約10回
-    noon_count = round(total * 7 / 40)     # 昼  約7回
-    evening_count = total - early_count - morning_count - noon_count  # 夜 残り
+    def sample_with_gap(slots: List[int], count: int, gap: int = 5) -> List[int]:
+        """最低gap分間隔でランダムに選ぶ"""
+        selected = []
+        available = slots.copy()
+        random.shuffle(available)
+        for m in available:
+            if all(abs(m - s) >= gap for s in selected):
+                selected.append(m)
+            if len(selected) >= count:
+                break
+        return sorted(selected)
 
     # 早朝 JST 4:30〜6:00 = UTC 19:30〜21:00
     early_slots = list(range(19 * 60 + 30, 21 * 60))
-    early = random.sample(early_slots, min(early_count, len(early_slots)))
-    for m in sorted(early):
+    early = sample_with_gap(early_slots, min(early_count, len(early_slots)))
+    for m in early:
         h, mn = divmod(m, 60)
         crons.append(f"'{mn} {h} * * *'")
 
     # 朝 JST 6:00〜9:00 = UTC 21:00〜0:00
     morning_slots = list(range(21 * 60, 24 * 60))
-    morning = random.sample(morning_slots, min(morning_count, len(morning_slots)))
-    for m in sorted(morning):
+    morning = sample_with_gap(morning_slots, min(morning_count, len(morning_slots)))
+    for m in morning:
         h, mn = divmod(m % (24 * 60), 60)
         crons.append(f"'{mn} {h % 24} * * *'")
 
     # 昼 JST 11:00〜13:00 = UTC 2:00〜4:00
     noon_slots = list(range(2 * 60, 4 * 60))
-    noon = random.sample(noon_slots, min(noon_count, len(noon_slots)))
-    for m in sorted(noon):
+    noon = sample_with_gap(noon_slots, min(noon_count, len(noon_slots)))
+    for m in noon:
         h, mn = divmod(m, 60)
         crons.append(f"'{mn} {h} * * *'")
 
     # 夜 JST 17:00〜23:00 = UTC 8:00〜14:00
     evening_slots = list(range(8 * 60, 14 * 60))
-    evening = random.sample(evening_slots, min(evening_count, len(evening_slots)))
-    for m in sorted(evening):
+    evening = sample_with_gap(evening_slots, min(evening_count, len(evening_slots)))
+    for m in evening:
         h, mn = divmod(m, 60)
         crons.append(f"'{mn} {h} * * *'")
 
