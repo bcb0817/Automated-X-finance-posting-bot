@@ -133,6 +133,8 @@ def main(mode: str = "test") -> None:
     elif mode == "diagram":
         logger.info("図解形式の投稿を生成中...")
         tweet = generate_tweet_diagram(item)
+        logger.info(f"生成文字数: {len(tweet)}文字")
+        logger.info(f"生成内容: {tweet}")
     else:
         logger.info("リンクなし投稿を生成中...")
         tweet = generate_tweet_without_link(item)
