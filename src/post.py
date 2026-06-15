@@ -67,8 +67,38 @@ def generate_tweet_without_link(item: NewsItem) -> str:
 - 100文字から300文字の間で、内容に適した文字数で書く
 - 金融クラスタ向けに専門的かつ簡潔に
 - 数字・データがあれば積極的に使う
-- 政府・中央銀行の発表に対して批判的・懐疑的な視点でコメントする
 - ハッシュタグを2個つける（例：#株式市場 #米国株）
+- ツイート本文のみ返答すること"""
+        }]
+    )
+    return message.content[0].text.strip()
+
+
+def generate_tweet_diagram(item: NewsItem) -> str:
+    """図解形式の投稿を生成"""
+    client = get_anthropic_client()
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=500,
+        messages=[{
+            "role": "user",
+            "content": f"""以下の金融ニュースを元に、Xに投稿する図解形式のツイートを1つ作成してください。
+
+ニュース：{item.title}
+ソース：{item.source}
+
+条件：
+- 200文字〜500文字
+- 以下のような図解・矢印・箇条書きを使って視覚的にわかりやすく
+  例：
+  【タイトル】
+  原因 → 結果
+  　↓
+  影響① 〇〇
+  影響② 〇〇
+  　↓
+  結論：〇〇
+- 金融市場に対する影響を専門的に
 - ツイート本文のみ返答すること"""
         }]
     )
@@ -92,7 +122,7 @@ def main(mode: str = "test") -> None:
         post_tweet("世界が平和になりますように🕊️")
         return
 
-    item = fetch_news()
+    item = fetch_news(with_link=(mode == "link"))
     if not item:
         logger.error("ニュース取得失敗")
         return
@@ -100,6 +130,9 @@ def main(mode: str = "test") -> None:
     if mode == "link":
         logger.info("リンクあり投稿を生成中...")
         tweet = generate_tweet_with_link(item)
+    elif mode == "diagram":
+        logger.info("図解形式の投稿を生成中...")
+        tweet = generate_tweet_diagram(item)
     else:
         logger.info("リンクなし投稿を生成中...")
         tweet = generate_tweet_without_link(item)
