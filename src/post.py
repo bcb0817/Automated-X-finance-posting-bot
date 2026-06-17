@@ -1,9 +1,13 @@
 import os
+import sys
 import logging
 from typing import Optional
+
 import anthropic
 import tweepy
+
 from news import fetch_news, NewsItem
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,7 +16,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+MAX_POST_LENGTH = 1000  # Xプレミアムなので余裕を持たせる
+NG_WORDS: list[str] = []  # 必要に応じて追加
+
+
 def get_tweepy_client() -> tweepy.Client:
+    required_envs = [
+        "API_KEY",
+        "API_KEY_SECRET",
+        "ACCESS_TOKEN",
+        "ACCESS_TOKEN_SECRET",
+    ]
+    for key in required_envs:
+        if not os.getenv(key):
+            raise RuntimeError(f"環境変数が未設定です: {key}")
+
     return tweepy.Client(
         consumer_key=os.environ["API_KEY"],
         consumer_secret=os.environ["API_KEY_SECRET"],
@@ -22,87 +41,137 @@ def get_tweepy_client() -> tweepy.Client:
 
 
 def get_anthropic_client() -> anthropic.Anthropic:
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise RuntimeError("環境変数が未設定です: ANTHROPIC_API_KEY")
     return anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+
+def clean_text(text: str) -> str:
+    """Claudeの余計な引用符や空白を軽く整える"""
+    text = text.strip()
+    if text.startswith("「") and text.endswith("」"):
+        text = text[1:-1].strip()
+    if text.startswith('"') and text.endswith('"'):
+        text = text[1:-1].strip()
+    return text
+
+
+def safety_check(text: str) -> None:
+    """投稿前の最低限チェック"""
+    if not text or not text.strip():
+        raise ValueError("投稿本文が空です")
+    if len(text) > MAX_POST_LENGTH:
+        raise ValueError(f"投稿本文が長すぎます: {len(text)}文字")
+    for word in NG_WORDS:
+        if word in text:
+            raise ValueError(f"NGワードを検出しました: {word}")
+
+
+def generate_by_claude(prompt: str, max_tokens: int = 400) -> str:
+    client = get_anthropic_client()
+    message = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = message.content[0].text
+    return clean_text(text)
+
+
+def build_finance_prompt(
+    item: NewsItem,
+    *,
+    with_link: bool = False,
+    diagram: bool = False,
+) -> str:
+    if diagram:
+        return f"""
+以下の金融ニュースを元に、Xに投稿する日本語の図解風ポストを1つ作成してください。
+
+ニュース：
+{item.title}
+
+ソース：
+{item.source}
+
+条件：
+- 180文字から260文字以内
+- 金融クラスタ向けに専門的かつ簡潔に
+- 図解風に、矢印・箇条書き・改行を使ってわかりやすく
+- 数字・データがニュースタイトルに含まれる場合のみ使う
+- ニュースにない数字は作らない
+- 踏み込んだ予測もOK
+- ハッシュタグは最大2個
+- URLは含めない
+- 投稿本文のみ返答する
+
+型の例：
+【市場メモ】
+材料：〇〇
+　↓
+市場の見方：〇〇
+　↓
+注目点：〇〇
+
+#株式市場 #米国株
+"""
+
+    if with_link:
+        length_rule = "100文字から210文字以内"
+    else:
+        length_rule = "120文字から260文字以内"
+
+    return f"""
+以下の金融ニュースを元に、Xに投稿する日本語のポストを1つ作成してください。
+
+ニュース：
+{item.title}
+
+ソース：
+{item.source}
+
+条件：
+- {length_rule}
+- 日本の個人投資家・金融クラスタ向け
+- 専門的だが、読みやすく簡潔に
+- 株式市場、金利、為替、マクロ経済への影響を一言で説明
+- 数字・データがニュースタイトルに含まれる場合のみ使う
+- ニュースにない数字は作らない
+- 断定的な予測もOK
+- ハッシュタグは最大2個
+- URLは含めない
+- 投稿本文のみ返答する
+
+おすすめの型：
+【市場メモ】
+本文
+
+注目点：〇〇
+"""
 
 
 def generate_tweet_with_link(item: NewsItem) -> str:
     """リンクあり投稿を生成"""
-    client = get_anthropic_client()
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=300,
-        messages=[{
-            "role": "user",
-            "content": f"""以下の金融ニュースを元に、Xに投稿する日本語のツイートを1つ作成してください。
-
-ニュース：{item.title}
-ソース：{item.source}
-
-条件：
-- 100文字から250文字の間で、内容に適した文字数で書く（URLは別途追加されるため本文のみ）
-- 金融クラスタ向けに専門的かつ簡潔に
-- 数字・データがあれば積極的に使う
-- ハッシュタグを2個つける（例：#株式市場 #米国株）
-- ツイート本文のみ返答すること（URLは含めない）"""
-        }]
-    )
-    text = message.content[0].text.strip()
+    prompt = build_finance_prompt(item, with_link=True)
+    text = generate_by_claude(prompt, max_tokens=400)
+    safety_check(text)  # URL追加前にチェック
     return f"{text}\n{item.url}"
 
 
 def generate_tweet_without_link(item: NewsItem) -> str:
     """リンクなし投稿を生成"""
-    client = get_anthropic_client()
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=300,
-        messages=[{
-            "role": "user",
-            "content": f"""以下の金融ニュースを元に、Xに投稿する日本語のツイートを1つ作成してください。
-
-ニュース：{item.title}
-ソース：{item.source}
-
-条件：
-- 100文字から300文字の間で、内容に適した文字数で書く
-- 金融クラスタ向けに専門的かつ簡潔に
-- 数字・データがあれば積極的に使う
-- ハッシュタグを2個つける（例：#株式市場 #米国株）
-- ツイート本文のみ返答すること"""
-        }]
-    )
-    return message.content[0].text.strip()
+    prompt = build_finance_prompt(item, with_link=False)
+    text = generate_by_claude(prompt, max_tokens=400)
+    safety_check(text)
+    return text
 
 
 def generate_tweet_diagram(item: NewsItem) -> str:
     """図解形式の投稿を生成"""
-    client = get_anthropic_client()
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=500,
-        messages=[{
-            "role": "user",
-            "content": f"""以下の金融ニュースを元に、Xに投稿する図解形式のツイートを1つ作成してください。
-
-ニュース：{item.title}
-ソース：{item.source}
-
-条件：
-- 200文字〜500文字
-- 以下のような図解・矢印・箇条書きを使って視覚的にわかりやすく
-  例：
-  【タイトル】
-  原因 → 結果
-  　↓
-  影響① 〇〇
-  影響② 〇〇
-  　↓
-  結論：〇〇
-- 金融市場に対する影響を専門的に
-- ツイート本文のみ返答すること"""
-        }]
-    )
-    return message.content[0].text.strip()
+    prompt = build_finance_prompt(item, diagram=True)
+    text = generate_by_claude(prompt, max_tokens=500)
+    safety_check(text)
+    return text
 
 
 def post_tweet(text: str) -> None:
@@ -116,33 +185,51 @@ def post_tweet(text: str) -> None:
         raise
 
 
-def main(mode: str = "test") -> None:
+def dry_run(text: str) -> None:
+    logger.info("=== DRY RUN: 投稿はしません ===")
+    logger.info(f"文字数: {len(text)}")
+    logger.info(f"内容:\n{text}")
+
+
+def create_tweet(mode: str, item: NewsItem) -> str:
+    if mode in ["link", "link-dry-run"]:
+        logger.info("リンクあり投稿を生成中...")
+        return generate_tweet_with_link(item)
+    if mode in ["diagram", "diagram-dry-run"]:
+        logger.info("図解形式の投稿を生成中...")
+        return generate_tweet_diagram(item)
+    logger.info("リンクなし投稿を生成中...")
+    return generate_tweet_without_link(item)
+
+
+def main(mode: str = "dry-run") -> None:
+    logger.info(f"mode: {mode}")
+
     if mode == "test":
-        logger.info("テストモードで投稿中...")
         post_tweet("世界が平和になりますように🕊️")
         return
 
-    item = fetch_news()
+    item: Optional[NewsItem] = fetch_news()
     if not item:
         logger.error("ニュース取得失敗")
         return
 
-    if mode == "link":
-        logger.info("リンクあり投稿を生成中...")
-        tweet = generate_tweet_with_link(item)
-    elif mode == "diagram":
-        logger.info("図解形式の投稿を生成中...")
-        tweet = generate_tweet_diagram(item)
-        logger.info(f"生成文字数: {len(tweet)}文字")
-        logger.info(f"生成内容: {tweet}")
-    else:
-        logger.info("リンクなし投稿を生成中...")
-        tweet = generate_tweet_without_link(item)
+    logger.info(f"取得ニュース: {item.title}")
+    logger.info(f"ソース: {item.source}")
 
-    post_tweet(tweet)
+    tweet = create_tweet(mode, item)
+
+    if "dry-run" in mode:
+        dry_run(tweet)
+        return
+
+    if mode in ["post", "normal", "link", "diagram"]:
+        post_tweet(tweet)
+        return
+
+    logger.error(f"不明なmodeです: {mode}")
 
 
 if __name__ == "__main__":
-    import sys
-    mode = sys.argv[1] if len(sys.argv) > 1 else "test"
+    mode = sys.argv[1] if len(sys.argv) > 1 else "dry-run"
     main(mode)
