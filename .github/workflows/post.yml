@@ -41,9 +41,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '投稿モード（normal / diagram / dry-run）'
+        description: '投稿モード（link / normal / diagram）'
         required: false
-        default: 'dry-run'
+        default: 'diagram'
 
 concurrency:
   group: x-finance-auto-post-bot
@@ -54,7 +54,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - uses: actions/checkout@v4
 
