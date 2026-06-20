@@ -83,7 +83,12 @@ jobs:
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
           else
-            echo "mode=image" >> $GITHUB_OUTPUT
+            # image と diagram を 50/50 でランダム振り分け
+            if [ $((RANDOM % 2)) -eq 0 ]; then
+              echo "mode=image" >> $GITHUB_OUTPUT
+            else
+              echo "mode=diagram" >> $GITHUB_OUTPUT
+            fi
           fi
       - name: Post to X
         if: steps.mode.outputs.mode != 'skip'
