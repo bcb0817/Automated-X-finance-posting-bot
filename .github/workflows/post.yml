@@ -49,7 +49,7 @@ on:
       mode:
         description: '投稿モード（link / normal / diagram / test）'
         required: false
-        default: 'test'
+        default: 'diagram'
 
 concurrency:
   group: x-finance-auto-post-bot
