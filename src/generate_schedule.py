@@ -1,9 +1,11 @@
 import random
 import os
+import sys
 import base64
 import json
 import urllib.request
 import urllib.error
+from pathlib import Path
 from typing import List, Tuple
 
 
@@ -17,18 +19,23 @@ WORKFLOW_PATH = ".github/workflows/post.yml"
 MIN_POSTS = 35
 MAX_POSTS = 40
 MIN_GAP_MINUTES = 12
+MIN_NOON_POSTS = 3
 
 # 毎時00分前後と58〜59分を避ける
 AVOID_MINUTES = {0, 1, 2, 3, 4, 58, 59}
 
 JST_OFFSET_HOURS = 9
 
+# スケジュールは JST の「分（0:00起算）」で設計する
 WINDOWS = [
     ("early",   "早朝", 4 * 60 + 30,  6 * 60, 3),
     ("morning", "朝",   6 * 60,        9 * 60, 10),
     ("noon",    "昼",  11 * 60,       13 * 60, 7),
     ("evening", "夜",  17 * 60,       23 * 60, 20),
 ]
+
+NOON_START = 11 * 60
+NOON_END = 13 * 60
 
 
 def minute_to_hhmm(minute: int) -> str:
@@ -37,15 +44,39 @@ def minute_to_hhmm(minute: int) -> str:
 
 
 def jst_minute_to_utc_cron(minute_jst: int) -> Tuple[int, int]:
-    utc = (minute_jst - JST_OFFSET_HOURS * 60) % (24 * 60)
-    return divmod(utc, 60)
+    """JSTの分（0:00起算）→ GitHub Actions cron 用の (UTC時, UTC分)"""
+    utc_total = (minute_jst - JST_OFFSET_HOURS * 60) % (24 * 60)
+    utc_h, utc_m = divmod(utc_total, 60)
+    return utc_h, utc_m
+
+
+def utc_cron_to_jst_minute(utc_h: int, utc_m: int) -> int:
+    """GitHub Actions cron (UTC) → JSTの分（0:00起算）"""
+    utc_total = utc_h * 60 + utc_m
+    return (utc_total + JST_OFFSET_HOURS * 60) % (24 * 60)
+
+
+def format_cron_line(minute_jst: int) -> str:
+    """JSTで設計した時刻を UTC cron に変換し、コメントには JST 実行時刻を書く"""
+    utc_h, utc_m = jst_minute_to_utc_cron(minute_jst)
+    return f"'{utc_m} {utc_h} * * *'  # JST {minute_to_hhmm(minute_jst)}"
+
+
+def count_in_window(selected: List[int], start: int, end: int) -> int:
+    return sum(1 for m in selected if start <= m < end)
 
 
 def allocate_counts(total: int) -> List[Tuple[str, str, int, int, int]]:
-    early   = round(total * 3 / 40)
-    morning = round(total * 10 / 40)
-    noon    = round(total * 7 / 40)
+    early = max(1, round(total * 3 / 40))
+    morning = max(1, round(total * 10 / 40))
+    noon = max(MIN_NOON_POSTS, round(total * 7 / 40))
     evening = total - early - morning - noon
+
+    if evening < 1:
+        raise RuntimeError(
+            f"投稿数が少なすぎます: total={total}, evening={evening}。"
+            f"MIN_POSTS を増やすか MIN_NOON_POSTS を下げてください。"
+        )
 
     counts = {
         "early": early,
@@ -98,6 +129,12 @@ def validate_schedule(selected: List[int], gap: int) -> None:
         if m >= 23 * 60:
             raise RuntimeError(f"23時以降: JST {minute_to_hhmm(m)}")
 
+    noon_count = count_in_window(sorted_sel, NOON_START, NOON_END)
+    if noon_count < MIN_NOON_POSTS:
+        raise RuntimeError(
+            f"昼帯(11:00-13:00 JST)の投稿が不足: {noon_count}回 < 最低{MIN_NOON_POSTS}回"
+        )
+
     for i in range(len(sorted_sel) - 1):
         diff = sorted_sel[i + 1] - sorted_sel[i]
         if diff < gap:
@@ -107,7 +144,65 @@ def validate_schedule(selected: List[int], gap: int) -> None:
             )
 
 
-def generate_crons() -> List[str]:
+def verify_cron_conversion(selected_jst: List[int], cron_lines: List[str]) -> None:
+    """生成した UTC cron が意図した JST に戻るか検証する"""
+    if len(selected_jst) != len(cron_lines):
+        raise RuntimeError("JST時刻数と cron 行数が一致しません。")
+
+    for minute_jst, line in zip(sorted(selected_jst), cron_lines):
+        utc_h, utc_m = jst_minute_to_utc_cron(minute_jst)
+        expected = f"'{utc_m} {utc_h} * * *'"
+        if expected not in line:
+            raise RuntimeError(
+                f"UTC変換不一致: JST {minute_to_hhmm(minute_jst)} "
+                f"→ 期待 {expected}, 実際 {line}"
+            )
+
+        roundtrip = utc_cron_to_jst_minute(utc_h, utc_m)
+        if roundtrip != minute_jst:
+            raise RuntimeError(
+                f"UTC→JST 逆変換不一致: JST {minute_to_hhmm(minute_jst)} "
+                f"→ UTC {utc_m:02d}:{utc_h:02d} → JST {minute_to_hhmm(roundtrip)}"
+            )
+
+
+def print_conversion_log(selected_jst: List[int]) -> None:
+    """UTC cron → JST 実行時刻の確認ログ"""
+    print("=" * 60)
+    print("UTC cron → JST 実行時刻 確認ログ")
+    print("(GitHub Actions の schedule は常に UTC で解釈されます)")
+    print("-" * 60)
+    print(f"{'UTC cron':<18} {'JST実行':<10} {'時間帯'}")
+    print("-" * 60)
+
+    window_labels = {
+        "early": "早朝 04:30-06:00",
+        "morning": "朝 06:00-09:00",
+        "noon": "昼 11:00-13:00",
+        "evening": "夜 17:00-23:00",
+    }
+
+    for minute_jst in sorted(selected_jst):
+        utc_h, utc_m = jst_minute_to_utc_cron(minute_jst)
+        label = "範囲外"
+        for name, _lbl, start, end, _ in WINDOWS:
+            if start <= minute_jst < end:
+                label = window_labels[name]
+                break
+        print(
+            f"{utc_m:02d} {utc_h:02d} * * *".ljust(18)
+            + f"JST {minute_to_hhmm(minute_jst)}".ljust(10)
+            + label
+        )
+
+    print("-" * 60)
+    for name, label, start, end, _ in WINDOWS:
+        count = count_in_window(selected_jst, start, end)
+        print(f"{label}: {count}回")
+    print("=" * 60)
+
+
+def generate_crons() -> Tuple[List[str], List[int]]:
     total = random.randint(MIN_POSTS, MAX_POSTS)
     window_counts = allocate_counts(total)
 
@@ -132,12 +227,10 @@ def generate_crons() -> List[str]:
         except RuntimeError:
             continue
 
-        crons: List[str] = []
-        for m_jst in selected:
-            utc_h, utc_m = jst_minute_to_utc_cron(m_jst)
-            crons.append(f"'{utc_m} {utc_h} * * *'  # JST {minute_to_hhmm(m_jst)}")
+        cron_lines = [format_cron_line(m_jst) for m_jst in selected]
+        verify_cron_conversion(selected, cron_lines)
 
-        gaps = [selected[i+1] - selected[i] for i in range(len(selected) - 1)]
+        gaps = [selected[i + 1] - selected[i] for i in range(len(selected) - 1)]
 
         print("=" * 48)
         print(f"本日の投稿数: {total}回")
@@ -148,7 +241,8 @@ def generate_crons() -> List[str]:
             print(f"{label}: {len(times)}回 / 予定{count}回  {', '.join(times)}")
         print("=" * 48)
 
-        return crons
+        print_conversion_log(selected)
+        return cron_lines, selected
 
     raise RuntimeError(
         "スケジュール生成失敗。MIN_GAP_MINUTESを下げるかMAX_POSTSを下げてください。"
@@ -199,6 +293,10 @@ def build_post_yml(crons: List[str]) -> str:
     cron_lines = "\n".join([f"    - cron: {c}" for c in crons])
     return f"""name: X Finance Auto Post Bot
 
+# schedule の cron は GitHub Actions 仕様により UTC。
+# コメントの JST は実際の日本時間での実行目安。
+# このファイルは毎日 0:00 JST に reset.yml が自動更新します。
+
 on:
   schedule:
 {cron_lines}
@@ -212,6 +310,9 @@ on:
 concurrency:
   group: x-finance-auto-post-bot
   cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   post:
@@ -249,6 +350,7 @@ jobs:
           fi
 
       - name: Post to X
+        id: post
         env:
           API_KEY: ${{{{ secrets.API_KEY }}}}
           API_KEY_SECRET: ${{{{ secrets.API_KEY_SECRET }}}}
@@ -258,16 +360,45 @@ jobs:
         run: |
           cd src
           python post.py ${{{{ steps.mode.outputs.mode }}}}
+
+      - name: Commit posted history
+        if: success() && steps.mode.outputs.mode != 'test'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/posted_history.json
+          git diff --staged --quiet || git commit -m "Update posted history"
+          git push
 """
 
 
+def write_local_post_yml(content: str) -> Path:
+    repo_root = Path(__file__).resolve().parent.parent
+    target = repo_root / WORKFLOW_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return target
+
+
 def main() -> None:
+    local_only = "--local-only" in sys.argv
+
+    crons, _selected = generate_crons()
+    content = build_post_yml(crons)
+
+    if local_only:
+        path = write_local_post_yml(content)
+        print(f"ローカル更新完了: {path}")
+        print(f"{len(crons)}個の UTC cron を書き込みました。")
+        return
+
     token = os.environ.get("GH_PAT")
     if not token:
-        raise RuntimeError("環境変数 GH_PAT が設定されていません。")
+        raise RuntimeError(
+            "環境変数 GH_PAT が設定されていません。"
+            "ローカルのみ更新する場合は --local-only を指定してください。"
+        )
 
-    crons = generate_crons()
-    content = build_post_yml(crons)
     sha = get_file_sha(token, REPO, WORKFLOW_PATH)
     update_file_via_api(token, REPO, WORKFLOW_PATH, content, sha)
     print(f"スケジュール更新完了！{len(crons)}個のcronを設定しました。")
