@@ -33,7 +33,7 @@ RSS_FEEDS: list[dict[str, str | int]] = [
     {"name": "St. Louis Fed Blog", "url": "https://fredblog.stlouisfed.org/feed", "category": "macro_data", "priority": 4},
     {"name": "Nikkei Asia Markets", "url": "https://asia.nikkei.com/rss/feed/nar", "category": "market_news", "priority": 4},
     {"name": "Japan Times Business", "url": "https://www.japantimes.co.jp/feed/business/", "category": "market_news", "priority": 3},
-    {"name": "FSA Japan", "url": "https://www.fsa.go.jp/en/rss/news.xml", "category": "central_bank", "priority": 4},
+    {"name": "FSA Japan", "url": "https://www.fsa.go.jp/fsaEnNewsList_rss2.xml", "category": "central_bank", "priority": 4},
 ]
 
 FINANCE_KEYWORDS: list[str] = [
