@@ -1,3 +1,4 @@
 tweepy
 feedparser
 openai>=1.0.0
+Pillow
