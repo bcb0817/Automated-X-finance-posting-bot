@@ -43,17 +43,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '投稿モード（link / normal / diagram / dry-run）'
+        description: '投稿モード（link / normal / diagram / image / dry-run）'
         required: false
         default: 'dry-run'
-
 concurrency:
   group: x-finance-auto-post-bot
   cancel-in-progress: true
-
 permissions:
   contents: write
-
 jobs:
   post:
     runs-on: ubuntu-latest
@@ -61,21 +58,19 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
+      - name: Install Japanese fonts
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - name: Debug time info
         run: |
           echo "UTC now : $(date -u '+%Y-%m-%d %H:%M:%S')"
           echo "JST now : $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
           echo "Event   : ${{ github.event_name }}"
           echo "SHA     : ${{ github.sha }}"
-
       - name: Determine post mode
         id: mode
         run: |
@@ -88,9 +83,8 @@ jobs:
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
           else
-            echo "mode=diagram" >> $GITHUB_OUTPUT
+            echo "mode=image" >> $GITHUB_OUTPUT
           fi
-
       - name: Post to X
         if: steps.mode.outputs.mode != 'skip'
         env:
@@ -102,7 +96,6 @@ jobs:
         run: |
           cd src
           python post.py "${{ steps.mode.outputs.mode }}"
-
       - name: Commit posted history
         if: success() && steps.mode.outputs.mode != 'skip' && steps.mode.outputs.mode != 'dry-run'
         run: |
