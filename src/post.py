@@ -335,7 +335,7 @@ def handle_image_post(item: NewsItem) -> None:
 def main(mode: str = "dry-run") -> None:
     logger.info(f"mode: {mode}")
 
-    if mode != "dry-run" and is_night_time_jst():
+    if mode not in ("dry-run", "image") and is_night_time_jst():
         now_jst = datetime.now(JST).strftime("%H:%M")
         logger.info(f"深夜帯（JST {now_jst}）のため投稿をスキップします（00:00〜04:29は禁止）")
         return
