@@ -7,6 +7,7 @@ import anthropic
 import tweepy
 
 from news import fetch_news, NewsItem
+from posted_history import add_posted_entry, get_posted_urls
 
 
 logging.basicConfig(
@@ -167,12 +168,14 @@ def generate_tweet_diagram(item: NewsItem) -> str:
     return text
 
 
-def post_tweet(text: str) -> None:
+def post_tweet(text: str) -> str:
     client = get_tweepy_client()
     try:
         response = client.create_tweet(text=text)
-        logger.info(f"投稿成功: {response.data['id']}")
+        tweet_id = str(response.data["id"])
+        logger.info(f"投稿成功: {tweet_id}")
         logger.info(f"内容: {text}")
+        return tweet_id
     except tweepy.TweepyException as e:
         logger.error(f"投稿失敗: {e}")
         raise
@@ -192,7 +195,10 @@ def create_tweet(mode: str, item: NewsItem) -> str:
 def main(mode: str = "diagram") -> None:
     logger.info(f"mode: {mode}")
 
-    item: Optional[NewsItem] = fetch_news()
+    posted_urls = get_posted_urls()
+    logger.info(f"投稿済みURL数: {len(posted_urls)}")
+
+    item: Optional[NewsItem] = fetch_news(posted_urls=posted_urls)
     if not item:
         logger.error("ニュース取得失敗")
         return
@@ -203,7 +209,8 @@ def main(mode: str = "diagram") -> None:
     tweet = create_tweet(mode, item)
 
     if mode in ["post", "normal", "link", "diagram"]:
-        post_tweet(tweet)
+        tweet_id = post_tweet(tweet)
+        add_posted_entry(item, tweet_id=tweet_id, mode=mode)
         return
 
     logger.error(f"不明なmodeです: {mode}")
