@@ -25,14 +25,10 @@ RSS_FEEDS: list[dict[str, str | int]] = [
     {"name": "Investing.com", "url": "https://www.investing.com/rss/news.rss", "category": "market_news", "priority": 3},
     {"name": "Fed Monetary Policy", "url": "https://www.federalreserve.gov/feeds/press_monetary.xml", "category": "central_bank", "priority": 5},
     {"name": "Fed Speeches", "url": "https://www.federalreserve.gov/feeds/speeches.xml", "category": "central_bank", "priority": 4},
-    {"name": "BEA News Releases", "url": "https://www.bea.gov/news/glance.xml", "category": "macro_data", "priority": 5},
-    {"name": "Reuters Business", "url": "https://feeds.reuters.com/reuters/businessNews", "category": "market_news", "priority": 4},
-    {"name": "CNBC Markets", "url": "https://search.cnbc.com/rs/search/combinedcombined/view/ajaxData.aspx?partnerId=1&categorytype=type&type=rss&rss=1", "category": "market_news", "priority": 3},
     {"name": "Seeking Alpha", "url": "https://seekingalpha.com/feed.xml", "category": "market_news", "priority": 3},
     {"name": "Benzinga", "url": "https://www.benzinga.com/feed", "category": "market_news", "priority": 3},
     {"name": "St. Louis Fed Blog", "url": "https://fredblog.stlouisfed.org/feed", "category": "macro_data", "priority": 4},
     {"name": "Nikkei Asia Markets", "url": "https://asia.nikkei.com/rss/feed/nar", "category": "market_news", "priority": 4},
-    {"name": "Japan Times Business", "url": "https://www.japantimes.co.jp/feed/business/", "category": "market_news", "priority": 3},
     {"name": "FSA Japan", "url": "https://www.fsa.go.jp/fsaEnNewsList_rss2.xml", "category": "central_bank", "priority": 4},
 ]
 
