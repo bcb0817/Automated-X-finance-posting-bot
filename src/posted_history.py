@@ -10,8 +10,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 JST = timezone(timedelta(hours=9))
+POSTED_HISTORY_PATH = "data/posted_history.json"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-HISTORY_FILE = REPO_ROOT / "data" / "posted_history.json"
+HISTORY_FILE = REPO_ROOT / POSTED_HISTORY_PATH
 MAX_ENTRIES = 500
 RETENTION_DAYS = 30
 

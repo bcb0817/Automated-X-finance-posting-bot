@@ -18,8 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-MAX_POST_LENGTH = 1000
-NG_WORDS: list[str] = []
+MAX_POST_LENGTH = 260
+NG_WORDS: list[str] = [
+    "絶対",
+    "確実",
+    "今すぐ買え",
+    "今すぐ売れ",
+    "爆益確定",
+]
+
+PROMPT_SAFETY_RULES = """- 投資助言・売買指示はしない
+- 「絶対」「確実」「必ず」などの断定表現は使わない
+- 見通しは「〜の可能性」「〜が意識されやすい」など慎重な表現にする
+- ニュースにない数字や事実は作らない"""
 
 
 def get_tweepy_client() -> tweepy.Client:
@@ -93,12 +104,11 @@ def build_finance_prompt(
 {item.source}
 
 条件：
-- 180文字から260文字以内
+- 180文字から240文字以内
 - 金融クラスタ向けに専門的かつ簡潔に
 - 図解風に、矢印・箇条書き・改行を使ってわかりやすく
 - 数字・データがニュースタイトルに含まれる場合のみ使う
-- ニュースにない数字は作らない
-- 踏み込んだ予測もOK
+{PROMPT_SAFETY_RULES}
 - ハッシュタグは最大2個
 - URLは含めない
 - 投稿本文のみ返答する
@@ -115,9 +125,9 @@ def build_finance_prompt(
 """
 
     if with_link:
-        length_rule = "100文字から210文字以内"
+        length_rule = "100文字から180文字以内（URLは別行で付けるため短めに）"
     else:
-        length_rule = "120文字から260文字以内"
+        length_rule = "120文字から240文字以内"
 
     return f"""以下の金融ニュースを元に、Xに投稿する日本語のポストを1つ作成してください。
 
@@ -131,10 +141,9 @@ def build_finance_prompt(
 - {length_rule}
 - 日本の個人投資家・金融クラスタ向け
 - 専門的だが、読みやすく簡潔に
-- 株式市場、金利、為替、マクロ経済への影響を一言で説明
+- 株式市場、金利、為替、マクロ経済への影響を中立的に説明
 - 数字・データがニュースタイトルに含まれる場合のみ使う
-- ニュースにない数字は作らない
-- 断定的な予測もOK
+{PROMPT_SAFETY_RULES}
 - ハッシュタグは最大2個
 - URLは含めない
 - 投稿本文のみ返答する
@@ -150,8 +159,9 @@ def build_finance_prompt(
 def generate_tweet_with_link(item: NewsItem) -> str:
     prompt = build_finance_prompt(item, with_link=True)
     text = generate_by_claude(prompt, max_tokens=400)
-    safety_check(text)
-    return f"{text}\n{item.url}"
+    tweet = f"{text}\n{item.url}"
+    safety_check(tweet)
+    return tweet
 
 
 def generate_tweet_without_link(item: NewsItem) -> str:
@@ -207,6 +217,12 @@ def main(mode: str = "diagram") -> None:
     logger.info(f"ソース: {item.source}")
 
     tweet = create_tweet(mode, item)
+
+    if mode == "test":
+        logger.info("=== TEST MODE: 投稿文プレビュー（Xには投稿しません） ===")
+        logger.info(tweet)
+        logger.info(f"文字数: {len(tweet)}")
+        return
 
     if mode in ["post", "normal", "link", "diagram"]:
         tweet_id = post_tweet(tweet)

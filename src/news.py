@@ -171,7 +171,11 @@ def select_best_item(
 
 
 def fetch_news(posted_urls: set[str] | None = None) -> Optional[NewsItem]:
-    """全フィードからニュースを取得して1件返す"""
+    """全フィードからニュースを取得して1件返す（data/posted_history.json のURLは除外）"""
+    if posted_urls is None:
+        from posted_history import get_posted_urls
+        posted_urls = get_posted_urls()
+
     all_items: list[NewsItem] = []
 
     for feed in RSS_FEEDS:

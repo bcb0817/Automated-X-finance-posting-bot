@@ -357,9 +357,7 @@ jobs:
           ACCESS_TOKEN: ${{{{ secrets.ACCESS_TOKEN }}}}
           ACCESS_TOKEN_SECRET: ${{{{ secrets.ACCESS_TOKEN_SECRET }}}}
           ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
-        run: |
-          cd src
-          python post.py ${{{{ steps.mode.outputs.mode }}}}
+        run: python src/post.py ${{{{ steps.mode.outputs.mode }}}}
 
       - name: Commit posted history
         if: success() && steps.mode.outputs.mode != 'test'
