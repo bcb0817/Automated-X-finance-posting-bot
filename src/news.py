@@ -138,17 +138,30 @@ def score_item(item: NewsItem) -> float:
     return score
 
 
-def select_best_item(items: list[NewsItem]) -> Optional[NewsItem]:
+def select_best_item(
+    items: list[NewsItem],
+    posted_urls: set[str] | None = None,
+) -> Optional[NewsItem]:
     """スコアが高いニュースの中からランダムに1件選ぶ"""
     if not items:
         return None
 
+    posted_urls = posted_urls or set()
+    available = [item for item in items if item.url not in posted_urls]
+    if not available:
+        logger.warning("未投稿のニュースがありません")
+        return None
+
+    excluded = len(items) - len(available)
+    if excluded:
+        logger.info(f"投稿済み {excluded} 件を除外しました")
+
     # 24時間以内に絞る
-    recent = [item for item in items if is_recent(item, hours=24)]
+    recent = [item for item in available if is_recent(item, hours=24)]
 
     if not recent:
-        logger.warning("24時間以内のニュースなし。全件から選択します")
-        recent = items
+        logger.warning("24時間以内の未投稿ニュースなし。全未投稿件から選択します")
+        recent = available
 
     scored = sorted(recent, key=lambda x: score_item(x), reverse=True)
     top = scored[:5]
@@ -157,7 +170,7 @@ def select_best_item(items: list[NewsItem]) -> Optional[NewsItem]:
     return selected
 
 
-def fetch_news() -> Optional[NewsItem]:
+def fetch_news(posted_urls: set[str] | None = None) -> Optional[NewsItem]:
     """全フィードからニュースを取得して1件返す"""
     all_items: list[NewsItem] = []
 
@@ -170,7 +183,7 @@ def fetch_news() -> Optional[NewsItem]:
     unique_items = deduplicate(all_items)
     logger.info(f"重複除去後: {len(unique_items)}件")
 
-    return select_best_item(unique_items)
+    return select_best_item(unique_items, posted_urls=posted_urls)
 
 
 def main() -> None:
