@@ -1,9 +1,7 @@
 name: X Finance Auto Post Bot
-
 # schedule の cron は GitHub Actions 仕様により UTC。
 # コメントの JST は実際の日本時間での実行目安。
 # このファイルは毎日 0:00 JST に reset.yml が自動更新します。
-
 on:
   schedule:
     - cron: '54 19 * * *'  # JST 04:54
@@ -51,49 +49,36 @@ on:
         description: '投稿モード（link / normal / diagram / test）'
         required: false
         default: 'test'
-
 concurrency:
   group: x-finance-auto-post-bot
   cancel-in-progress: false
-
 permissions:
   contents: write
-
 jobs:
   post:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Determine post mode
         id: mode
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
           else
-            HOUR=$(TZ=Asia/Tokyo date +%H)
-            if [ "$HOUR" = "04" ] || [ "$HOUR" = "06" ] || [ "$HOUR" = "11" ] || [ "$HOUR" = "17" ]; then
+            RAND=$((RANDOM % 2))
+            if [ "$RAND" = "0" ]; then
               echo "mode=link" >> $GITHUB_OUTPUT
             else
-              RAND=$((RANDOM % 2))
-              if [ "$RAND" = "0" ]; then
-                echo "mode=normal" >> $GITHUB_OUTPUT
-              else
-                echo "mode=diagram" >> $GITHUB_OUTPUT
-              fi
+              echo "mode=diagram" >> $GITHUB_OUTPUT
             fi
           fi
-
       - name: Post to X
         id: post
         env:
@@ -103,7 +88,6 @@ jobs:
           ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python src/post.py ${{ steps.mode.outputs.mode }}
-
       - name: Commit posted history
         if: success() && steps.mode.outputs.mode != 'test'
         run: |
