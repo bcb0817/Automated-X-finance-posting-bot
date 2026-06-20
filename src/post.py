@@ -105,6 +105,7 @@ def generate_by_openai(prompt: str, max_tokens: int = 2000) -> str:
         model=OPENAI_GENERATE_MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_completion_tokens=max_tokens,
+        reasoning_effort="minimal",   # ← 追加
     )
     text = response.choices[0].message.content or ""
     return clean_text(text)
@@ -215,6 +216,7 @@ risk_level は "low" / "medium" / "high" のいずれかにしてください。
             messages=[{"role": "user", "content": review_prompt}],
             max_completion_tokens=2000,
             response_format={"type": "json_object"},
+            reasoning_effort="minimal",   # ← 追加
         )
         raw = response.choices[0].message.content or "{}"
         result = json.loads(raw)
