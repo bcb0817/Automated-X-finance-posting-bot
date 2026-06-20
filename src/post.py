@@ -257,7 +257,7 @@ def generate_tweet_without_link(item: NewsItem) -> str:
 
 def generate_tweet_diagram(item: NewsItem) -> str:
     prompt = build_finance_prompt(item, diagram=True)
-    return generate_by_openai(prompt, max_tokens=2000)
+    return generate_by_openai(prompt, max_tokens=4000)
 
 
 def create_tweet(mode: str, item: NewsItem) -> str:
