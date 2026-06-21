@@ -238,8 +238,23 @@ def post_weekly_events(raw_events: list[dict], out_path: str = OUT_PATH):
     return tweet_id
 
 
+def get_weekly_raw_events() -> list[dict]:
+    """実データ(Finnhub)を優先。キー未設定/空/失敗ならサンプルにフォールバック。"""
+    try:
+        from weekly_events import fetch_weekly_events
+        ev = fetch_weekly_events()
+        if ev:
+            logger.info(f"実データ取得: {len(ev)}件（Finnhub）")
+            return ev
+        logger.warning("実データが空のためサンプルにフォールバックします")
+    except Exception as e:
+        logger.warning(f"weekly_events取得失敗、サンプル使用: {e}")
+    return SAMPLE_RAW_EVENTS
+
+
 if __name__ == "__main__":
+    raw = get_weekly_raw_events()
     if len(sys.argv) > 1 and sys.argv[1] == "post":
-        post_weekly_events(SAMPLE_RAW_EVENTS)
+        post_weekly_events(raw)
     else:
-        generate_weekly_image(SAMPLE_RAW_EVENTS)
+        generate_weekly_image(raw)
