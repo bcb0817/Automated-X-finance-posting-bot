@@ -6,52 +6,50 @@ name: X Finance Auto Post Bot
 
 on:
   schedule:
-    - cron: '48 19 * * *'  # JST 04:48
-    - cron: '38 20 * * *'  # JST 05:38
+    - cron: '45 19 * * *'  # JST 04:45
+    - cron: '29 20 * * *'  # JST 05:29
     - cron: '53 20 * * *'  # JST 05:53
     - cron: '10 21 * * *'  # JST 06:10
-    - cron: '25 21 * * *'  # JST 06:25
-    - cron: '38 21 * * *'  # JST 06:38
+    - cron: '33 21 * * *'  # JST 06:33
     - cron: '56 21 * * *'  # JST 06:56
-    - cron: '15 22 * * *'  # JST 07:15
-    - cron: '36 22 * * *'  # JST 07:36
-    - cron: '54 22 * * *'  # JST 07:54
-    - cron: '8 23 * * *'  # JST 08:08
-    - cron: '26 23 * * *'  # JST 08:26
-    - cron: '49 23 * * *'  # JST 08:49
-    - cron: '9 2 * * *'  # JST 11:09
-    - cron: '34 2 * * *'  # JST 11:34
-    - cron: '50 2 * * *'  # JST 11:50
-    - cron: '10 3 * * *'  # JST 12:10
-    - cron: '24 3 * * *'  # JST 12:24
-    - cron: '42 3 * * *'  # JST 12:42
-    - cron: '54 3 * * *'  # JST 12:54
-    - cron: '13 8 * * *'  # JST 17:13
-    - cron: '30 8 * * *'  # JST 17:30
-    - cron: '44 8 * * *'  # JST 17:44
-    - cron: '6 9 * * *'  # JST 18:06
-    - cron: '27 9 * * *'  # JST 18:27
-    - cron: '43 9 * * *'  # JST 18:43
-    - cron: '55 9 * * *'  # JST 18:55
-    - cron: '18 10 * * *'  # JST 19:18
-    - cron: '32 10 * * *'  # JST 19:32
-    - cron: '51 10 * * *'  # JST 19:51
+    - cron: '8 22 * * *'  # JST 07:08
+    - cron: '28 22 * * *'  # JST 07:28
+    - cron: '48 22 * * *'  # JST 07:48
+    - cron: '6 23 * * *'  # JST 08:06
+    - cron: '19 23 * * *'  # JST 08:19
+    - cron: '31 23 * * *'  # JST 08:31
+    - cron: '46 23 * * *'  # JST 08:46
+    - cron: '5 2 * * *'  # JST 11:05
+    - cron: '18 2 * * *'  # JST 11:18
+    - cron: '30 2 * * *'  # JST 11:30
+    - cron: '56 2 * * *'  # JST 11:56
+    - cron: '11 3 * * *'  # JST 12:11
+    - cron: '31 3 * * *'  # JST 12:31
+    - cron: '44 3 * * *'  # JST 12:44
+    - cron: '10 8 * * *'  # JST 17:10
+    - cron: '33 8 * * *'  # JST 17:33
+    - cron: '49 8 * * *'  # JST 17:49
+    - cron: '17 9 * * *'  # JST 18:17
+    - cron: '35 9 * * *'  # JST 18:35
+    - cron: '47 9 * * *'  # JST 18:47
+    - cron: '15 10 * * *'  # JST 19:15
+    - cron: '28 10 * * *'  # JST 19:28
+    - cron: '45 10 * * *'  # JST 19:45
     - cron: '5 11 * * *'  # JST 20:05
-    - cron: '37 11 * * *'  # JST 20:37
+    - cron: '19 11 * * *'  # JST 20:19
+    - cron: '35 11 * * *'  # JST 20:35
     - cron: '52 11 * * *'  # JST 20:52
-    - cron: '11 12 * * *'  # JST 21:11
-    - cron: '23 12 * * *'  # JST 21:23
-    - cron: '38 12 * * *'  # JST 21:38
-    - cron: '51 12 * * *'  # JST 21:51
-    - cron: '8 13 * * *'  # JST 22:08
-    - cron: '31 13 * * *'  # JST 22:31
-    - cron: '52 13 * * *'  # JST 22:52
+    - cron: '16 12 * * *'  # JST 21:16
+    - cron: '33 12 * * *'  # JST 21:33
+    - cron: '57 12 * * *'  # JST 21:57
+    - cron: '25 13 * * *'  # JST 22:25
+    - cron: '49 13 * * *'  # JST 22:49
   workflow_dispatch:
     inputs:
       mode:
-        description: '投稿モード（diagram / image / dry-run）'
+        description: '投稿モード（link / normal / diagram / image / dry-run）'
         required: false
-        default: 'image'
+        default: 'dry-run'
 
 concurrency:
   group: x-finance-auto-post-bot
@@ -117,7 +115,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           cd src
-          python post.py "${{ steps.mode.outputs.mode }}"
+          python news_bot/post.py "${{ steps.mode.outputs.mode }}"
 
       - name: Commit posted history
         if: success() && steps.mode.outputs.mode != 'skip' && steps.mode.outputs.mode != 'dry-run'
@@ -125,11 +123,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/posted_history.json
-          git diff --staged --quiet && echo "変更なし。スキップ。" && exit 0
-          git commit -m "Update posted history"
-          for i in 1 2 3 4 5; do
-            git pull --rebase origin main && git push && exit 0
-            echo "push 失敗。リトライ $i..."
-            sleep 5
-          done
-          echo "5回試行しても push できませんでした。" && exit 1
+          git diff --staged --quiet || git commit -m "Update posted history"
+          git push
