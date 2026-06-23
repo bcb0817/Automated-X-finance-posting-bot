@@ -12,7 +12,7 @@ AIには取得済みシグナルだけを渡し、存在しないニュース・
     [{theme, whats_happening, why_market_cares, tickers[], stance, impact(1-10)}]
   top_theme  : 今日の最重要テーマ {conclusion, rationale, tickers[]}
   x_post     : X投稿案（120字以内・結論先・株価影響明記・平易・煽らない）
-  post_value : 投稿価値(1-10)。7未満は投稿しない
+  post_value : 投稿価値(1-10)。8未満は投稿しない
 """
 
 import json
@@ -20,7 +20,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-POST_VALUE_THRESHOLD = 7
+POST_VALUE_THRESHOLD = 8
 X_POST_MAX = 120
 
 
@@ -130,10 +130,24 @@ def _build_prompt(signals: dict) -> str:
   "post_value": 1〜10の整数
 }}
 
-【post_value 基準】
-10: 市場全体を動かす / 8-9: 主要セクターを動かす / 5-7: 個別株レベル / 1-4: 投稿不要。
+【post_value 基準（厳格に適用）】
+- 10: 米国株市場全体を動かす最重要テーマ
+- 9: NASDAQ/S&P500、金利、ドル、半導体、大型テックに強く影響
+- 8: 主要セクターや大型株に明確な影響がある
+- 7: 重要ではあるが、投稿するほどではない
+- 6以下: ノイズ、局所的、材料不足
+投稿対象は post_value が 8 以上のみ。7以下は投稿しない前提で、誠実に採点すること。
+
+【post_value を 8 未満（投稿しない側）に下げるべきケース】
+次のいずれかに当てはまるなら、たとえ話題性があっても 7 以下にする：
+- 根拠のない因果の断定がある（「Aが原因でBが起きた」と取得シグナルで裏づけられない）
+- 取得シグナルに無い市場解説を作っている（出所のない解釈の追加）
+- 投資助言・推奨に見える表現がある
+- 市場への影響が弱い、または局所的（個別株・地方・ニッチ）
+- 出所不明の材料を中心に組み立てている
 narratives は最大3件。impact/post_value は取得シグナルの実態に対して誠実に。
-シグナルが弱い日は無理にテーマを作らず、post_value を低く（投稿不要）してよい。"""
+シグナルが弱い日は無理にテーマを作らず、post_value を低く（投稿不要）してよい。
+投稿数より質を優先し、迷ったら低めに採点すること。"""
 
 
 def analyze_market(signals: dict | None = None) -> dict:

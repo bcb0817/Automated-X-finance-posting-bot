@@ -5,7 +5,7 @@ narrative_post.py
 フロー:
   1. 4ソース集約（gather_signals）
   2. 編集長AIで①〜④生成（analyze_market）
-  3. ④ post_value < 7 なら投稿しない（ゲート）
+  3. ④ post_value < 8 なら投稿しない（ゲート）
   4. ①②を画像化（render_narrative）
   5. ③ X投稿案をレビュー（review_tweet_with_openai）
   6. 画像＋③で投稿（post_tweet_with_image）
@@ -47,7 +47,48 @@ def _log_analysis(a: dict) -> None:
     logger.info("x_post=%r (len=%d)", a.get("x_post", ""), len(a.get("x_post", "")))
 
 
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+
+# 米国市場（NYSE/NASDAQ）の全休場日。出所: NYSE/ICE 公式カレンダー。
+# 半日立会い（早期クローズ）は通常営業扱いとし、ここには含めない。
+# ※ AIの推測ではなく公式日程の転記。年に1回、翌年分を更新すること。
+US_MARKET_HOLIDAYS = {
+    # 2026年（10日）
+    "2026-01-01",  # 元日
+    "2026-01-19",  # キング牧師記念日
+    "2026-02-16",  # ワシントン誕生日（大統領の日）
+    "2026-04-03",  # グッドフライデー
+    "2026-05-25",  # メモリアルデー
+    "2026-06-19",  # ジューンティーンス
+    "2026-07-03",  # 独立記念日の振替（7/4が土曜のため）
+    "2026-09-07",  # レイバーデー
+    "2026-11-26",  # サンクスギビング
+    "2026-12-25",  # クリスマス
+}
+
+
+def _is_us_market_holiday() -> tuple[bool, str]:
+    """米国東部時間(ET)の「今日」が市場の祝日休場日か判定。
+    （週末はcronが平日のみ=1-5のため対象外。手動テストは週末でも可能にする）"""
+    try:
+        et_today = datetime.now(ZoneInfo("America/New_York")).date()
+    except Exception:
+        # zoneinfoが無い環境向けフォールバック（夏時間 -4h 固定で近似）
+        et_today = (datetime.now(timezone.utc) - timedelta(hours=4)).date()
+    iso = et_today.isoformat()
+    if iso in US_MARKET_HOLIDAYS:
+        return True, f"米国市場の休場日（ET {iso}）"
+    return False, ""
+
+
 def run_narrative(post: bool = False, out_path: str = OUT_PATH):
+    # 米国市場の休場日（週末・祝日）は実行しない
+    is_holiday, holiday_reason = _is_us_market_holiday()
+    if is_holiday:
+        logger.info(f"{holiday_reason} のため市場ナラティブは実行しません。")
+        return None
+
     signals = gather_signals()
     if not any(signals.values()):
         logger.warning("シグナルが空。分析を中止します。")
@@ -56,13 +97,19 @@ def run_narrative(post: bool = False, out_path: str = OUT_PATH):
     analysis = analyze_market(signals)
     _log_analysis(analysis)
 
-    # ===== ④ 投稿価値ゲート =====
-    pv = int(analysis.get("post_value", 0))
-    if pv < POST_VALUE_THRESHOLD:
-        logger.info(f"post_value {pv} < {POST_VALUE_THRESHOLD}。投稿不要のためスキップします。")
-        # 画像だけは残す（確認用）
-        render_narrative(analysis, out_path)
-        return None
+    # ===== ④ 投稿価値ゲート（早期スキップ：画像生成より前で判定しコスト削減）=====
+    post_value = int(analysis.get("post_value", 0))
+    should_post = post_value >= POST_VALUE_THRESHOLD
+    skip_reason = "" if should_post else "投稿価値が基準未満"
+    logger.info(
+        f"post_value={post_value} / threshold={POST_VALUE_THRESHOLD} / "
+        f"should_post={str(should_post).lower()} / skip_reason={skip_reason or '-'}"
+    )
+    if not should_post:
+        logger.info(
+            f"post_value={post_value}（閾値={POST_VALUE_THRESHOLD}）のため投稿スキップ"
+        )
+        return None   # 画像生成・X投稿に進まず即終了（OpenAIコスト削減）
 
     image_path = render_narrative(analysis, out_path)
 
