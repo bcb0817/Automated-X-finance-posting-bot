@@ -46,6 +46,3 @@ jobs:
           else
             python narrative_bot/narrative_post.py
           fi
-```
-
-これが現在の `narrative.yml` の全文です。3つの自動実行（夏時間基準・平日）＋手動実行、スケジュール起動時は自動で実投稿、という構成になっています。
