@@ -2,3 +2,9 @@ tweepy
 feedparser
 openai>=1.0.0
 Pillow
+yfinance
+pandas
+plotly
+kaleido
+tweepy
+lxml
