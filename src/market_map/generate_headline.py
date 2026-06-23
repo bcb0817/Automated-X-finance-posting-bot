@@ -38,6 +38,10 @@ def make_caption(
         - 売り/買いの中心セクター
         - 主な下落銘柄
         - ハッシュタグ少なめ
+
+    ※ X は1投稿につき cashtag($SYMBOL)を最大1つまでしか許可しないため、
+       下落銘柄のティッカーには $ を付けない(AAPL -2.1% の形式)。
+       金額の $1.5T などは cashtag 扱いされないのでそのままでよい。
     """
     amount = format_usd(total_change)
     direction = "wiped off" if total_change < 0 else "added to"
@@ -46,14 +50,14 @@ def make_caption(
     worst_sector = sector_summary.iloc[0]
     best_sector = sector_summary.iloc[-1]
 
-    # 主な下落銘柄(下落率の大きい順)
+    # 主な下落銘柄(下落率の大きい順)。cashtag制限のため $ は付けない
     decliners = (
         df[df["percent_change"] < 0]
         .sort_values("percent_change")
         .head(n_movers)
     )
     mover_lines = ", ".join(
-        f"${r.ticker} {r.percent_change * 100:+.1f}%" for r in decliners.itertuples()
+        f"{r.ticker} {r.percent_change * 100:+.1f}%" for r in decliners.itertuples()
     )
 
     lines = [
