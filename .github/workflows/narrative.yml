@@ -1,6 +1,3 @@
-ナラティブのワークフロー（`narrative.yml`）の全文です。
-
-```yaml
 name: Market Narrative
 
 # cron は UTC 固定（GitHub Actions 仕様）。米国市場の夏時間(EDT)基準。
