@@ -34,6 +34,7 @@ from market_narrative import (
     POST_VALUE_THRESHOLD, X_POST_MAX,
 )
 from narrative_renderer import render_narrative
+from safety import format_decision_log
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -120,6 +121,13 @@ def run_narrative(post: bool = False, out_path: str = OUT_PATH):
     )
     if not should_post:
         logger.info(f"post_value={post_value}（閾値={POST_VALUE_THRESHOLD}）のため投稿スキップ")
+        logger.info(format_decision_log(
+            selected_post_type="market_narrative",
+            post_value=post_value,
+            skip_reason=f"post_value<{POST_VALUE_THRESHOLD}",
+            source_titles=top.get("source_titles", []),
+            ticker=",".join(top.get("tickers", []) or []),
+        ))
         return None   # 画像生成・X投稿に進まず即終了（OpenAIコスト削減）
 
     # ===== top_narrative だけを画像化 =====
@@ -127,6 +135,12 @@ def run_narrative(post: bool = False, out_path: str = OUT_PATH):
 
     if not post:
         logger.info("画像生成のみ（postモードではないため投稿しません）")
+        logger.info(format_decision_log(
+            selected_post_type="market_narrative", post_value=post_value,
+            skip_reason="image_only_mode",
+            source_titles=top.get("source_titles", []),
+            ticker=",".join(top.get("tickers", []) or []),
+            image_path=image_path))
         return image_path
 
     # ===== X投稿（top_narrative だけをレビュー対象にする）=====
@@ -153,10 +167,21 @@ def run_narrative(post: bool = False, out_path: str = OUT_PATH):
     logger.info("review_result=%s", json.dumps(review, ensure_ascii=False))
     if not review.get("ok_to_post", False):
         logger.warning(f"AIレビューにより投稿中止: {review.get('reason','理由なし')}")
+        logger.info(format_decision_log(
+            selected_post_type="market_narrative", post_value=post_value,
+            skip_reason=f"ai_review_ng:{review.get('reason','')}",
+            source_titles=top.get("source_titles", []),
+            ticker=",".join(top.get("tickers", []) or []),
+            final_caption=caption, image_path=image_path))
         return None
 
     tweet_id = post_tweet_with_image(caption, image_path)
     logger.info(f"市場ナラティブ投稿成功: {tweet_id}")
+    logger.info(format_decision_log(
+        selected_post_type="market_narrative", post_value=post_value,
+        source_titles=top.get("source_titles", []),
+        ticker=",".join(top.get("tickers", []) or []),
+        final_caption=caption, image_path=image_path, tweet_id=tweet_id))
     return tweet_id
 
 

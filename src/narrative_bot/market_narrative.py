@@ -22,7 +22,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 POST_VALUE_THRESHOLD = 8
-X_POST_MAX = 120
+X_POST_MAX = 280  # 文字数ガード（重み付き上限は build_caption 側で270に制御）
 
 
 def _gather_news(limit: int = 15) -> list[dict]:
@@ -120,6 +120,7 @@ def _build_prompt(signals: dict) -> str:
       "stance": "強気" or "弱気" or "中立",
       "impact": 1〜10の整数,
       "post_value": 1〜10の整数,
+      "conclusion": "結論を一言で（40字以内・結論ファースト・断定しすぎない）",
       "what": "何が起きているか（80〜120字、取得シグナルに基づく）",
       "why": "なぜ重要か（80〜120字）",
       "market_effect": "市場への影響（60〜100字、どのセクター/資産にどう効くか）",
@@ -150,13 +151,17 @@ market_effect 60〜100字 / watch_points は3点以内。
 投稿数より質を優先し、迷ったら低めに採点すること。"""
 
 
-# 米国株指数・金利・ドル・半導体・大型テックに関わるキーワード（優先順位3用）
+# 米国株指数・金利・ドル・指標・半導体・大型テック・原油・地政学に関わるキーワード
 _PRIORITY_KEYWORDS = [
     "s&p", "sp500", "s&p500", "nasdaq", "ナスダック", "ダウ", "指数",
-    "金利", "利上げ", "利下げ", "fed", "frb", "fomc", "国債", "利回り",
+    "金利", "利上げ", "利下げ", "fed", "frb", "fomc", "国債", "利回り", "yield",
     "ドル", "為替", "dxy",
-    "半導体", "semiconductor", "chip", "nvda", "nvidia", "micron", "mu", "amd", "avgo", "tsm",
+    "pce", "cpi", "ppi", "雇用", "payroll", "jobs", "gdp", "ism", "pmi",
+    "半導体", "semiconductor", "chip", "ai", "人工知能",
+    "nvda", "nvidia", "micron", "mu", "amd", "avgo", "tsm", "asml",
     "apple", "microsoft", "google", "amazon", "meta", "tesla", "大型テック", "メガキャップ",
+    "原油", "oil", "crude", "opec", "エネルギー", "energy",
+    "地政学", "geopolitic", "中東", "台湾", "関税", "tariff", "制裁",
 ]
 
 
@@ -229,6 +234,7 @@ def _normalize_candidate(c: dict) -> dict:
     c["what"] = _clip(c.get("what", ""), 120)
     c["why"] = _clip(c.get("why", ""), 120)
     c["market_effect"] = _clip(c.get("market_effect", ""), 100)
+    c["conclusion"] = _clip(c.get("conclusion", "") or c.get("title", ""), 60)
     wp = c.get("watch_points", []) or []
     c["watch_points"] = [_clip(w, 40) for w in wp[:3]]
     c["tickers"] = (c.get("tickers", []) or [])[:6]
@@ -237,11 +243,52 @@ def _normalize_candidate(c: dict) -> dict:
 
 
 def build_caption(top: dict) -> str:
-    """top_narrative から X投稿本文を組み立てる（120字以内・結論先・煽らない）。"""
-    title = top.get("title", "").strip()
-    effect = top.get("market_effect", "").strip()
-    caption = f"【{title}】{effect}" if title else effect
-    return _clip(caption, X_POST_MAX)
+    """top_narrative から X投稿本文を組み立てる（結論ファースト・URLなし・ソース名のみ）。
+    形式:
+        結論：…
+        何が起きた：…
+        なぜ重要：…
+        見るべき点：…
+    X重み付き文字数(<=270)に収まるよう各セクションを切り詰める。
+    """
+    try:
+        from safety import weighted_len
+    except Exception:
+        def weighted_len(s):  # フォールバック（CJK=2近似）
+            return sum(1 if ord(c) < 0x1100 else 2 for c in s or "")
+
+    conclusion = (top.get("conclusion") or top.get("title") or "").strip()
+    what = (top.get("what") or "").strip()
+    why = (top.get("why") or "").strip()
+    wps = top.get("watch_points") or []
+    watch = (wps[0] if wps else (top.get("market_effect") or "")).strip()
+
+    def line(label, text, budget):
+        text = _clip(text, budget)
+        return f"{label}{text}" if text else ""
+
+    # 初期予算（必要なら全体で詰める）
+    parts = [
+        line("結論：", conclusion, 50),
+        line("何が起きた：", what, 60),
+        line("なぜ重要：", why, 60),
+        line("見るべき点：", watch, 50),
+    ]
+    caption = "\n".join(p for p in parts if p)
+
+    # X重み付き270を超えるなら、後ろのセクションから削って収める
+    cap_budget = 270
+    while weighted_len(caption) > cap_budget and len(parts) > 1:
+        # 末尾の非空セクションを1つ落とす
+        for i in range(len(parts) - 1, 0, -1):
+            if parts[i]:
+                parts[i] = ""
+                break
+        caption = "\n".join(p for p in parts if p)
+    # それでも長い場合は結論だけにして丸める
+    if weighted_len(caption) > cap_budget:
+        caption = _clip(f"結論：{conclusion}", 120)
+    return caption
 
 
 def analyze_market(signals: dict | None = None) -> dict:

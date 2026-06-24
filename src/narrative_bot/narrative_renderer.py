@@ -112,13 +112,16 @@ def render_narrative(top: dict, out_path: str) -> str:
             cy += 38
         cy += 12
 
-    section("何が起きているか", top.get("what", ""))
-    section("なぜ重要か", top.get("why", ""))
-    section("市場への影響", top.get("market_effect", ""))
+    # 結論ファースト：結論 → 何が起きた → なぜ重要 → 見るべき点
+    section("結論", top.get("conclusion", "") or top.get("title", ""))
+    section("何が起きた", top.get("what", ""))
+    why_text = (top.get("why", "") or "").strip()
+    me = (top.get("market_effect", "") or "").strip()
+    section("なぜ重要", (why_text + ("　" + me if me else "")).strip())
 
     wps = (top.get("watch_points", []) or [])[:3]
     if wps:
-        d.text((inner, cy), "見るべきポイント", font=f_label, fill=ACCENT)
+        d.text((inner, cy), "見るべき点", font=f_label, fill=ACCENT)
         cy += 36
         for w in wps:
             d.text((inner + 6, cy), "・", font=f_body, fill=ACCENT)
