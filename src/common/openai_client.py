@@ -35,6 +35,34 @@ def generate_by_openai(prompt: str, max_tokens: int = 2000) -> str:
     return clean_text(text)
 
 
+def shorten_tweet_with_openai(text: str, max_chars: int = 240) -> str:
+    """280字超の投稿を 180〜max_chars 字に短縮リライトする。
+    意味と重要な数字は保持。新しい事実・URL・ハッシュタグ・絵文字は追加しない。
+    投資助言・売買推奨にしない。失敗時は元テキストを返す（呼び出し側で再チェック）。
+    """
+    try:
+        client = get_openai_client()
+        prompt = (
+            f"次のX投稿を、意味と重要な数字を保ったまま日本語で{max_chars}字以内"
+            f"（目安180〜{max_chars}字）に短縮してください。\n"
+            "- 新しい事実・数字・URL・ハッシュタグ・絵文字を追加しない\n"
+            "- 投資助言・売買推奨・断定にしない\n"
+            "- 改行は最小限、投稿本文のみ返す\n\n"
+            f"本文:\n{text}"
+        )
+        response = client.chat.completions.create(
+            model=OPENAI_GENERATE_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=2000,
+            reasoning_effort="minimal",
+        )
+        out = clean_text(response.choices[0].message.content or "")
+        return out or text
+    except Exception as e:
+        logger.warning(f"短縮リライト失敗、元テキストを使用: {e}")
+        return text
+
+
 def review_tweet_with_openai(text: str, news_title: str, source: str) -> dict:
     """投稿前にAIで内容をレビューし、投稿可否をJSONで返す"""
     client = get_openai_client()
