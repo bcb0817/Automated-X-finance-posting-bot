@@ -57,7 +57,12 @@ def safety_check(text: str) -> None:
             raise ValueError(f"NGワードを検出しました: {word}")
 
 
-# 全Bot共通の投稿価値しきい値（これ未満は投稿しない）
+# 投稿価値しきい値（Botごとに分離）
+# 通常Bot: post_value>=7 で投稿（<=6 のみスキップ）
+# Narrative: post_value>=8 のみ投稿（7はスキップ）
+NEWS_BOT_POST_VALUE_THRESHOLD = 7
+NARRATIVE_POST_VALUE_THRESHOLD = 8
+# 後方互換（既存 import 用。汎用の既定値）
 POST_VALUE_THRESHOLD = 8
 
 
