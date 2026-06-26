@@ -311,17 +311,20 @@ def create_tweet(mode: str, item: NewsItem) -> str:
 
 def _news_log(
     *, selected_news_title="", source="-", selected_post_type="news_summary",
-    post_value="-", us_equity_relevance="-", market_scope="-",
+    post_value="-", us_equity_relevance="-", social_buzz_score="-",
+    narrative_value="-", theme_relevance="-", market_scope="-",
     threshold=NEWS_BOT_POST_VALUE_THRESHOLD, should_post="-",
     skip_reason="-", safety_check_result="-", shortened=False, tweet_id="-",
 ) -> None:
     """通常Botの判断ログ（要件の全フィールドを毎run出す）。"""
     logger.info(
         "[NEWS] selected_news_title=%r | source=%s | selected_post_type=%s | "
-        "post_value=%s | us_equity_relevance=%s | market_scope=%s | threshold=%s | "
+        "post_value=%s | us_equity_relevance=%s | social_buzz_score=%s | "
+        "narrative_value=%s | theme_relevance=%s | market_scope=%s | threshold=%s | "
         "should_post=%s | skip_reason=%s | safety_check_result=%s | shortened=%s | tweet_id=%s",
         selected_news_title, source, selected_post_type,
-        post_value, us_equity_relevance, market_scope, threshold,
+        post_value, us_equity_relevance, social_buzz_score,
+        narrative_value, theme_relevance, market_scope, threshold,
         str(should_post).lower() if isinstance(should_post, bool) else should_post,
         skip_reason or "-", safety_check_result or "-",
         str(bool(shortened)).lower(), tweet_id or "-",
@@ -358,15 +361,26 @@ def ensure_postable(text: str, *, max_chars: int = 240) -> tuple[bool, str, str,
     return True, shortened_text, "ok_after_shorten", shortened
 
 
-def handle_image_post(item: NewsItem, post_value=0, us_equity_relevance="-", market_scope="-") -> None:
+def handle_image_post(item: NewsItem, impact: dict | None = None) -> None:
+    impact = impact or {}
     _src = item.source
+
+    def _log(**kw):
+        _news_log(
+            selected_news_title=item.title, source=_src, selected_post_type="image",
+            post_value=impact.get("post_value", "-"),
+            us_equity_relevance=impact.get("us_equity_relevance", "-"),
+            social_buzz_score=impact.get("social_buzz_score", "-"),
+            narrative_value=impact.get("narrative_value", "-"),
+            theme_relevance=impact.get("theme_relevance", "-"),
+            market_scope=impact.get("market_scope", "-"),
+            should_post=True, **kw,
+        )
+
     oai = get_openai_client()
     result = generate_diagram_image(item, oai, OPENAI_GENERATE_MODEL)
     if result is None:
-        _news_log(selected_news_title=item.title, source=_src, selected_post_type="image",
-                  post_value=post_value, us_equity_relevance=us_equity_relevance,
-                  market_scope=market_scope, should_post=True,
-                  skip_reason="diagram_generation_failed")
+        _log(skip_reason="diagram_generation_failed")
         return
     image_path, caption, review_text, dtype = result
     logger.info(f"図解type={dtype} / caption={caption!r}")
@@ -374,93 +388,100 @@ def handle_image_post(item: NewsItem, post_value=0, us_equity_relevance="-", mar
     # 文字数オーバーは即スキップせず短縮を試す
     ok, caption, safety_result, shortened = ensure_postable(caption, max_chars=240)
     if not ok:
-        _news_log(selected_news_title=item.title, source=_src, selected_post_type="image",
-                  post_value=post_value, us_equity_relevance=us_equity_relevance,
-                  market_scope=market_scope, should_post=True,
-                  skip_reason=safety_result, safety_check_result=safety_result,
-                  shortened=shortened)
+        _log(skip_reason=safety_result, safety_check_result=safety_result, shortened=shortened)
         return
 
     review = review_tweet_with_openai(review_text, item.title, item.source)
     logger.info(f"レビュー結果: {json.dumps(review, ensure_ascii=False)}")
     if not review.get("ok_to_post", False):
-        _news_log(selected_news_title=item.title, source=_src, selected_post_type="image",
-                  post_value=post_value, us_equity_relevance=us_equity_relevance,
-                  market_scope=market_scope, should_post=True,
-                  skip_reason=f"ai_review_ng:{review.get('reason','')}",
-                  safety_check_result=safety_result, shortened=shortened)
+        _log(skip_reason=f"ai_review_ng:{review.get('reason','')}",
+             safety_check_result=safety_result, shortened=shortened)
         return
 
     tweet_id = post_tweet_with_image(caption, image_path)
     add_posted_entry(item, tweet_id=tweet_id, mode="image")
-    _news_log(selected_news_title=item.title, source=_src, selected_post_type="image",
-              post_value=post_value, us_equity_relevance=us_equity_relevance,
-              market_scope=market_scope, should_post=True, skip_reason="-",
-              safety_check_result=safety_result, shortened=shortened, tweet_id=tweet_id)
+    _log(skip_reason="-", safety_check_result=safety_result,
+         shortened=shortened, tweet_id=tweet_id)
 
 
 # 通常ニュースBotは「高投稿価値だけ」方針。post_value>=7 かつ 米国株関連度>=8 のみ投稿。
 IMPACT_SKIP_LEVEL = "low"  # 後方互換（未使用化）
 
-# should_post を許可する market_scope（地域・ニッチは除外）
+# should_post を許可する market_scope（直接インパクト経路）
 NEWS_BOT_ALLOWED_SCOPES = {"market_wide", "sector", "major_company"}
-# us_equity_relevance の投稿許可しきい値
+# us_equity_relevance の投稿許可しきい値（直接インパクト経路）
 NEWS_BOT_RELEVANCE_THRESHOLD = 8
+# 話題性・ナラティブ経路のしきい値
+NEWS_BOT_BUZZ_THRESHOLD = 8
+NEWS_BOT_NARRATIVE_THRESHOLD = 8
 
 
 def assess_market_impact(item: NewsItem) -> dict:
     """
-    投稿候補ニュースを post_value(1-10) と us_equity_relevance(1-10) で採点する。
-    source priority では投稿価値を底上げしない（公式ソースでも relevance が低ければ落とす）。
+    投稿候補ニュースを多軸で採点する。
+      - post_value(投稿価値) / us_equity_relevance(直接の米国株関連度)
+      - social_buzz_score(X話題性) / narrative_value(相場ナラティブ価値) / theme_relevance(テーマ接続度)
+    source priority では投稿価値を底上げしない（公式ソースでも価値が低ければ落とす）。
 
-    返り値: post_value, us_equity_relevance, market_scope, should_post, reason, skip_reason
-    should_post = (post_value>=7 and us_equity_relevance>=8
-                   and market_scope in {market_wide, sector, major_company})
-    AI失敗時は should_post=False（高価値だけ通す方針なのでフェイルクローズ）。
+    投稿条件（OR）:
+      (A) 直接: post_value>=7 and us_equity_relevance>=8 and market_scope in 許可scope
+      (B) 話題: post_value>=7 and social_buzz_score>=8 and narrative_value>=8
+    → AI相場・半導体・IPO等のテーマは、指数/金利に直接効かなくても (B) で投稿可能。
+    AI失敗時は should_post=False（フェイルクローズ）。
     """
-    prompt = f"""あなたは米国株クラスタ向け金融SNSの編集者です。
-次のニュースを「米国株式市場の一般投資家にとっての価値」と「米国株式市場との関連度」で採点してください。
-ソースが公式（EIA/BEA/Fed等）でも、米国株クラスタへの関連度が低ければ投稿しない方針です。
+    prompt = f"""あなたは米国株クラスタ（X/Twitter）向け金融SNSの編集者です。
+次のニュースを、(A)市場への直接影響 と (B)Xで伸びやすい話題性・ナラティブ価値 の両面で採点してください。
+ソースが公式（EIA/BEA/Fed等）でも、米国株クラスタへの価値が低ければ投稿しない方針です。
+一方で、指数や金利に直接効かなくても、AI相場・半導体・IPO市場・大型テックへの連想で
+X金融クラスタが話題化しやすいテーマは、投稿価値があります。
 
 ニュースタイトル: {item.title}
 ソース: {item.source}（種別: {getattr(item, 'source_group', 'market_news')}）
 
 【post_value 1〜10（投稿する価値）】
-- 10: 米国株市場全体を動かす最重要材料（FOMC/CPI/雇用/主要ハイテク決算など）
-- 9 : 金利・ドル・半導体・大型テックに強く影響
-- 8 : 主要セクター・大型株に明確な影響
-- 7 : 投稿する価値のある重要材料
-- 6以下: ノイズ、局所的、業界専門、材料不足
+- 10: 米国株市場全体を動かす最重要材料 / 8: 主要セクター・大型株に明確 / 7: 投稿価値あり / 6以下: 薄い
 
-【us_equity_relevance 1〜10（米国株式市場との関連度）】
-- 10: S&P500/NASDAQ/米金利/ドル/大型テックに直接影響
-- 9 : 半導体・AI・大型株・FRB・CPI/PCE/雇用統計などに明確な影響
-- 8 : 主要セクターや大型株に明確な影響
-- 7 : 一部セクターに関係するが米国株全体への波及は限定的
-- 6以下: 業界ニュース・地域ニュース・個別性が強く、米国株クラスタ向けには弱い
+【us_equity_relevance 1〜10（米国株式市場との"直接"関連度）】
+- 10: S&P500/NASDAQ/米金利/ドル/大型テックに直接影響 / 9: 半導体・AI・大型株・FRB・CPI/PCE/雇用 /
+  8: 主要セクター・大型株に明確 / 7: 一部セクター限定 / 6以下: 業界・地域・個別性が強い
+
+【social_buzz_score 1〜10（X金融クラスタで話題になりやすいか）】高くする例:
+- OpenAI / Anthropic / xAI / DeepSeek / Meta AI などAI企業
+- AIバブル、AI設備投資、データセンター、半導体需要
+- Nvidia / Microsoft / Oracle / Broadcom / AMD / Micron などへの連想が強い話題
+- IPO延期・IPO観測・未上場AI企業バリュエーション
+- SOXL / 半導体ETF / NASDAQセンチメントに波及しやすい話題
+- X上で議論・ミーム化しやすい金融テーマ
+
+【narrative_value 1〜10（"市場の物語"として語りやすいか）】高くする例:
+- AI相場の持続性 / 半導体サイクル / データセンター投資 / IPO市場の過熱・冷却 /
+  バリュエーション不安 / 規制・輸出管理・地政学 / 大型テーマ株への連想
+
+【theme_relevance 1〜10（金融クラスタの関心テーマ＝AI/半導体/大型テック/IPO/金利/規制等への接続度）】
 
 【market_scope（いずれか1つ）】
-"market_wide" / "sector" / "major_company" / "single_name" / "niche_energy" / "none"
+"market_wide" / "sector" / "major_company" / "ai_theme" / "semis_theme" /
+"ipo_theme" / "single_name" / "niche_energy" / "none"
 
-【原則スキップ（relevance を低く、scope を niche 等にする）】
-- 地域電力市場、NY ISO / PJM / ERCOT などの地域グリッド単体
-- 小規模太陽光、電力需要、設備容量などの専門的な電力市場ニュース
-- 米国株指数・大型株・金利・ドル・原油・インフレに波及しにくいEIA記事
-- 業界関係者向けで一般投資家の関心が低いニュース
+【話題性で通す場合の品質条件（すべて満たすときだけ buzz/narrative を高くする）】
+- AI/半導体/大型テック/IPO/金利/規制など、金融クラスタの関心テーマに接続できる
+- 投稿にすると「で？」ではなく、相場ナラティブとして読める
+- 読者がリポスト・引用したくなる論点がある
+- 投資助言ではなく、テーマ整理として投稿できる
+単なる有名企業の人事・製品・提携など、相場ナラティブに接続できないものは narrative_value を低くすること。
 
-【EIAニュースで投稿してよいのは以下に限定】
-- 原油在庫 / ガソリン在庫 / 天然ガス在庫
-- WTI/Brent価格に影響しそうな需給ニュース
-- OPEC+ 関連
-- エネルギー株・インフレ・金利に波及しそうなもの
-- XOM, CVX, SLB など主要エネルギー株に関係するもの
-上記以外のEIA記事（地域電力需給・小規模太陽光等）は us_equity_relevance を低く、market_scope を "niche_energy" にすること。
+【原則スキップ】地域電力市場 / NY ISO・PJM・ERCOT / 小規模太陽光・電力需要・設備容量 /
+米国株指数・大型株・金利・ドル・原油・インフレに波及しにくいEIA記事 / 業界関係者向けで関心が低いもの。
+EIAで投稿可は「原油/ガソリン/天然ガス在庫・WTI/Brent需給・OPEC+・エネルギー株/インフレ/金利波及・XOM/CVX/SLB関連」に限定。
 
 以下のJSONのみ返す（説明文・Markdown禁止）。
 {{
   "post_value": 1〜10の整数,
   "us_equity_relevance": 1〜10の整数,
-  "market_scope": "market_wide" or "sector" or "major_company" or "single_name" or "niche_energy" or "none",
+  "social_buzz_score": 1〜10の整数,
+  "narrative_value": 1〜10の整数,
+  "theme_relevance": 1〜10の整数,
+  "market_scope": "上記のいずれか",
   "reason": "日本語1文で理由",
   "skip_reason": "スキップする場合の理由（投稿可なら空文字）"
 }}"""
@@ -474,44 +495,56 @@ def assess_market_impact(item: NewsItem) -> dict:
             reasoning_effort="minimal",
         )
         data = json.loads(resp.choices[0].message.content or "{}")
-        try:
-            pv = int(data.get("post_value", 0))
-        except Exception:
-            pv = 0
-        try:
-            rel = int(data.get("us_equity_relevance", 0))
-        except Exception:
-            rel = 0
+
+        def _i(key):
+            try:
+                return int(data.get(key, 0))
+            except Exception:
+                return 0
+        pv = _i("post_value")
+        rel = _i("us_equity_relevance")
+        buzz = _i("social_buzz_score")
+        narr = _i("narrative_value")
+        theme = _i("theme_relevance")
         scope = str(data.get("market_scope", "none"))
 
-        should = (
+        # (A) 直接インパクト経路 / (B) 話題性・ナラティブ経路
+        direct_ok = (
             pv >= NEWS_BOT_POST_VALUE_THRESHOLD
             and rel >= NEWS_BOT_RELEVANCE_THRESHOLD
             and scope in NEWS_BOT_ALLOWED_SCOPES
         )
-        # スキップ理由を明確化
+        buzz_ok = (
+            pv >= NEWS_BOT_POST_VALUE_THRESHOLD
+            and buzz >= NEWS_BOT_BUZZ_THRESHOLD
+            and narr >= NEWS_BOT_NARRATIVE_THRESHOLD
+        )
+        should = direct_ok or buzz_ok
+
         if should:
             skip_reason = ""
         elif pv < NEWS_BOT_POST_VALUE_THRESHOLD:
             skip_reason = f"post_value<{NEWS_BOT_POST_VALUE_THRESHOLD}"
-        elif rel < NEWS_BOT_RELEVANCE_THRESHOLD:
-            skip_reason = f"us_equity_relevance<{NEWS_BOT_RELEVANCE_THRESHOLD}"
-        elif scope not in NEWS_BOT_ALLOWED_SCOPES:
-            skip_reason = f"market_scope={scope}（米国株クラスタ向けに弱い）"
         else:
-            skip_reason = data.get("skip_reason") or "low_value"
+            # post_value は足りているが、直接経路も話題性経路も満たさない
+            skip_reason = (
+                f"direct(rel{rel}/scope:{scope})・buzz(buzz{buzz}/narr{narr}) ともに基準未満"
+            )
 
-        data["post_value"] = pv
-        data["us_equity_relevance"] = rel
-        data["market_scope"] = scope
-        data["should_post"] = should
-        data["skip_reason"] = skip_reason
+        data.update({
+            "post_value": pv, "us_equity_relevance": rel,
+            "social_buzz_score": buzz, "narrative_value": narr,
+            "theme_relevance": theme, "market_scope": scope,
+            "should_post": should, "skip_reason": skip_reason,
+            "pass_path": "direct" if direct_ok else ("buzz" if buzz_ok else "-"),
+        })
         return data
     except Exception as e:
         logger.warning(f"インパクト判定API失敗、高価値方針によりスキップ（フェイルクローズ）: {e}")
-        return {"post_value": 0, "us_equity_relevance": 0, "market_scope": "unknown",
+        return {"post_value": 0, "us_equity_relevance": 0, "social_buzz_score": 0,
+                "narrative_value": 0, "theme_relevance": 0, "market_scope": "unknown",
                 "reason": f"判定不能: {e}", "should_post": False,
-                "skip_reason": "assess_failed"}
+                "skip_reason": "assess_failed", "pass_path": "-"}
 
 
 def main(mode: str = "image") -> None:
@@ -533,21 +566,29 @@ def main(mode: str = "image") -> None:
     logger.info(f"取得ニュース: {item.title}")
     logger.info(f"ソース: {item.source}")
 
-    # 投稿価値＋米国株関連度ゲート（画像生成・レビューの前に判定する）。
+    # 投稿価値＋関連度＋話題性ゲート（画像生成・投稿文生成の前に判定する）。
     impact = assess_market_impact(item)
     pv = impact.get("post_value", 0)
     rel = impact.get("us_equity_relevance", 0)
+    buzz = impact.get("social_buzz_score", 0)
+    narr = impact.get("narrative_value", 0)
+    theme = impact.get("theme_relevance", 0)
     scope = impact.get("market_scope", "-")
     should = impact.get("should_post", False)
-    if not should:
+
+    def _gate_log(**kw):
         _news_log(selected_news_title=item.title, source=item.source, selected_post_type=mode,
-                  post_value=pv, us_equity_relevance=rel, market_scope=scope,
-                  should_post=False, skip_reason=impact.get("skip_reason") or "low_value")
-        logger.info(f"関連度/価値が基準未満のためスキップ: {impact.get('reason')}")
+                  post_value=pv, us_equity_relevance=rel, social_buzz_score=buzz,
+                  narrative_value=narr, theme_relevance=theme, market_scope=scope, **kw)
+
+    if not should:
+        _gate_log(should_post=False, skip_reason=impact.get("skip_reason") or "low_value")
+        logger.info(f"基準未満のためスキップ（{impact.get('pass_path','-')}）: {impact.get('reason')}")
         return
+    logger.info(f"投稿可（経路={impact.get('pass_path','-')}）: {impact.get('reason','')}")
 
     if mode == "image":
-        handle_image_post(item, post_value=pv, us_equity_relevance=rel, market_scope=scope)
+        handle_image_post(item, impact=impact)
         return
 
     tweet = create_tweet(mode, item)
@@ -555,9 +596,7 @@ def main(mode: str = "image") -> None:
     # 文字数オーバーは即スキップせず短縮を試す。NG/空はスキップ。
     ok, tweet, safety_result, shortened = ensure_postable(tweet, max_chars=240)
     if not ok:
-        _news_log(selected_news_title=item.title, source=item.source, selected_post_type=mode,
-                  post_value=pv, us_equity_relevance=rel, market_scope=scope,
-                  should_post=True, skip_reason=safety_result,
+        _gate_log(should_post=True, skip_reason=safety_result,
                   safety_check_result=safety_result, shortened=shortened)
         logger.info(f"safety未通過のためスキップ: {safety_result}\n{tweet}")
         return
@@ -565,17 +604,13 @@ def main(mode: str = "image") -> None:
     review = review_tweet_with_openai(tweet, item.title, item.source)
     logger.info(f"レビュー結果: {json.dumps(review, ensure_ascii=False)}")
     if not review.get("ok_to_post", False):
-        _news_log(selected_news_title=item.title, source=item.source, selected_post_type=mode,
-                  post_value=pv, us_equity_relevance=rel, market_scope=scope,
-                  should_post=True, skip_reason=f"ai_review_ng:{review.get('reason','')}",
+        _gate_log(should_post=True, skip_reason=f"ai_review_ng:{review.get('reason','')}",
                   safety_check_result=safety_result, shortened=shortened)
         return
 
     tweet_id = post_tweet(tweet)
     add_posted_entry(item, tweet_id=tweet_id, mode=mode)
-    _news_log(selected_news_title=item.title, source=item.source, selected_post_type=mode,
-              post_value=pv, us_equity_relevance=rel, market_scope=scope,
-              should_post=True, skip_reason="-",
+    _gate_log(should_post=True, skip_reason="-",
               safety_check_result=safety_result, shortened=shortened, tweet_id=tweet_id)
 
 
